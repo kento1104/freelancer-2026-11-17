@@ -55,7 +55,7 @@ export default (projectInfo) => {
             projectInfo['ProposalBudget']= projectInfo['MaxBudget']
         }else if(projectInfo['MinBudgetGroup']==10){ //[10, 20)
             projectInfo['ProposalBudget']= selectBudget(projectInfo['MinBudget'], projectInfo['MaxBudget'], 0, 0.50);
-        }else if(20<projectInfo['MinBudgetGroup']){ //[20, +) 
+        }else if(20<=projectInfo['MinBudgetGroup']){ //[20, +) 
             projectInfo['ProposalBudget']= projectInfo['MinBudget']
         }else{
             console.log('SYSError: No valid budget range found.');
