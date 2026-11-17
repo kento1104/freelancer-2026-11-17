@@ -7,34 +7,24 @@ const projectCountElement = document.querySelector("#project-count");
 const tableHeadElement = document.querySelector("thead");
 const tableBodyElement = document.querySelector("tbody");
 const destinationElement = document.querySelector("#destination");
+const AUTO_FETCH_INTERVAL_MS = 10_000;
 let requestInProgress = false;
-let serverAutoFetchActive = false;
+let autoFetchActive = false;
 let autoFetchCommandInProgress = false;
+let autoFetchRunId = 0;
+let autoFetchTimer = null;
+let autoFetchAbortController = null;
 const SERVER_BASE_URL = /^https?:$/.test(globalThis.location.protocol)
   ? globalThis.location.origin
   : globalThis.SERVER_BASE_URL.replace(/\/+$/, "");
 destinationElement.textContent =
   `Server endpoint: ${SERVER_BASE_URL}/fetch_projects`;
 
-async function postToServer(endpoint) {
+async function postToServer(endpoint, signal) {
   const response = await fetch(
     `${SERVER_BASE_URL}${endpoint}`,
-    { method: "POST" },
+    { method: "POST", signal },
   );
-  let result;
-  try {
-    result = await response.json();
-  } catch {
-    throw new Error(`Local server returned invalid JSON (HTTP ${response.status}).`);
-  }
-  if (!response.ok || !result?.ok) {
-    throw new Error(result?.error || `Local server returned HTTP ${response.status}.`);
-  }
-  return result;
-}
-
-async function getAutoFetchStatus() {
-  const response = await fetch(`${SERVER_BASE_URL}/auto_fetch/status`);
   let result;
   try {
     result = await response.json();
@@ -106,97 +96,96 @@ function renderProjects(projects) {
   resultsElement.hidden = false;
 }
 
-async function fetchAndForwardProjects() {
-  if (requestInProgress) return false;
-  requestInProgress = true;
+async function fetchAndForwardProjects(
+  runId = null,
+  isAutoFetch = false,
+  signal,
+) {
+  if (requestInProgress && !isAutoFetch) return false;
+  if (!isAutoFetch) {
+    requestInProgress = true;
+    updateRepeatControls();
+  }
   statusElement.dataset.state = "working";
   statusElement.textContent = "Fetching projects...";
 
   try {
-    const result = await postToServer("/fetch_projects");
+    const result = await postToServer("/fetch_projects", signal);
     if (Array.isArray(result.projects)) {
       renderProjects(result.projects);
     }
 
-    statusElement.dataset.state = "success";
-    statusElement.textContent = result.message;
+    if (runId === null || runId === autoFetchRunId) {
+      statusElement.dataset.state = "success";
+      statusElement.textContent = result.message;
+    }
     return true;
   } catch (error) {
-    statusElement.dataset.state = "error";
-    statusElement.textContent = error.message;
+    if (runId === null || runId === autoFetchRunId) {
+      statusElement.dataset.state = "error";
+      statusElement.textContent = error.message;
+    }
     return false;
   } finally {
-    requestInProgress = false;
-  }
-}
-
-sendButton.addEventListener("click", async () => {
-  sendButton.disabled = true;
-  try {
-    await fetchAndForwardProjects();
-  } finally {
-    sendButton.disabled = serverAutoFetchActive || autoFetchCommandInProgress;
-  }
-});
-
-function updateRepeatControls(active) {
-  serverAutoFetchActive = active;
-  startButton.disabled = active || autoFetchCommandInProgress;
-  stopButton.disabled = !active || autoFetchCommandInProgress;
-  sendButton.disabled = active || autoFetchCommandInProgress;
-}
-
-async function restoreAutoFetchStatus() {
-  try {
-    const status = await getAutoFetchStatus();
-    updateRepeatControls(status.active);
-    if (status.active) {
-      statusElement.dataset.state = "working";
-      statusElement.textContent = "Server-side auto-fetch is running.";
-    } else if (status.inProgress) {
-      statusElement.dataset.state = "working";
-      statusElement.textContent = "A server-side project fetch is in progress.";
+    if (!isAutoFetch) {
+      requestInProgress = false;
+      updateRepeatControls();
     }
-  } catch (error) {
-    statusElement.dataset.state = "error";
-    statusElement.textContent = error.message;
   }
 }
 
-void restoreAutoFetchStatus();
+sendButton.addEventListener("click", () => void fetchAndForwardProjects());
 
-startButton.addEventListener("click", async () => {
-  autoFetchCommandInProgress = true;
-  updateRepeatControls(serverAutoFetchActive);
-  try {
-    const result = await postToServer("/auto_fetch/start");
-    updateRepeatControls(true);
-    statusElement.dataset.state = "working";
-    statusElement.textContent = result.message;
-  } catch (error) {
-    startButton.disabled = false;
-    statusElement.dataset.state = "error";
-    statusElement.textContent = error.message;
-  } finally {
-    autoFetchCommandInProgress = false;
-    updateRepeatControls(serverAutoFetchActive);
-  }
+function updateRepeatControls() {
+  startButton.disabled =
+    autoFetchActive || autoFetchCommandInProgress || requestInProgress;
+  stopButton.disabled = !autoFetchActive || autoFetchCommandInProgress;
+  sendButton.disabled =
+    autoFetchActive || autoFetchCommandInProgress || requestInProgress;
+}
+
+startButton.addEventListener("click", () => {
+  autoFetchActive = true;
+  const runId = ++autoFetchRunId;
+  autoFetchAbortController = new AbortController();
+  updateRepeatControls();
+  statusElement.dataset.state = "working";
+  statusElement.textContent =
+    "Frontend auto-fetch started. Requests will be sent every 10 seconds.";
+  void fetchAndForwardProjects(runId, true, autoFetchAbortController.signal);
+  autoFetchTimer = setInterval(() => {
+    if (autoFetchActive && runId === autoFetchRunId) {
+      void fetchAndForwardProjects(
+        runId,
+        true,
+        autoFetchAbortController.signal,
+      );
+    }
+  }, AUTO_FETCH_INTERVAL_MS);
 });
 
 stopButton.addEventListener("click", async () => {
+  autoFetchActive = false;
+  autoFetchRunId += 1;
+  if (autoFetchTimer !== null) {
+    clearInterval(autoFetchTimer);
+    autoFetchTimer = null;
+  }
+  autoFetchAbortController?.abort();
+  autoFetchAbortController = null;
   autoFetchCommandInProgress = true;
-  updateRepeatControls(serverAutoFetchActive);
+  updateRepeatControls();
   try {
     const result = await postToServer("/auto_fetch/stop");
-    updateRepeatControls(false);
     statusElement.dataset.state = "success";
     statusElement.textContent = result.message;
   } catch (error) {
-    stopButton.disabled = false;
     statusElement.dataset.state = "error";
     statusElement.textContent = error.message;
   } finally {
     autoFetchCommandInProgress = false;
-    updateRepeatControls(serverAutoFetchActive);
+    updateRepeatControls();
   }
 });
+
+updateRepeatControls();

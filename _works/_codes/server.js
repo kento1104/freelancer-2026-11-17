@@ -88,7 +88,6 @@ dotenv.config({ path: path.join(SERVER_ROOT, ".env") });
 const app = express();
 const PORT = Number(process.env.PORT || 5000);
 const HOST = process.env.HOST || "0.0.0.0";
-const PROJECT_POLL_INTERVAL_MS = 10_000;
 const corsOrigins = (process.env.CORS_ORIGINS || "*")
     .split(",")
     .map(origin => origin.trim())
@@ -113,7 +112,6 @@ app.get("/health", (_req, res) => {
 });
 
 app.post("/fetch_projects", handleFetchProjects);
-app.post("/auto_fetch/start", handleStartAutoFetch);
 app.post("/auto_fetch/stop", handleStopAutoFetch);
 
 // Google Sheets API configuration
@@ -1100,19 +1098,8 @@ app.post("/add", async (req, res) => {
 });
 
 const HREFPERREQUEST = 1;
-let autoFetchActive = false;
-let autoFetchTimer = null;
-let autoFetchCyclePromise = null;
 let projectFetchPromise = null;
 let projectFetchAbortController = null;
-
-app.get("/auto_fetch/status", (_req, res) => {
-    res.json({
-        ok: true,
-        active: autoFetchActive,
-        inProgress: Boolean(autoFetchCyclePromise || projectFetchPromise),
-    });
-});
 
 async function handleDetailAdd(req, res) {
     try {
@@ -1145,35 +1132,12 @@ async function handleFetchProjects(_req, res) {
     }
 }
 
-function handleStartAutoFetch(_req, res) {
-    if (autoFetchActive) {
-        return res.json({
-            ok: true,
-            active: true,
-            message: "Server-side auto-fetch is already running.",
-        });
-    }
-
-    autoFetchActive = true;
-    void runAutoFetchCycle();
-    return res.json({
-        ok: true,
-        active: true,
-        message: "Server-side auto-fetch started. The server will send a fetch request every 10 seconds.",
-    });
-}
-
 async function handleStopAutoFetch(_req, res) {
-    autoFetchActive = false;
-    if (autoFetchTimer) {
-        clearTimeout(autoFetchTimer);
-        autoFetchTimer = null;
-    }
     await cancelCurrentProjectFetch();
     return res.json({
         ok: true,
         active: false,
-        message: "Server-side auto-fetch stopped.",
+        message: "Current project fetch cancelled.",
     });
 }
 
@@ -1244,14 +1208,8 @@ function sendFetchError(res, error) {
 }
 
 async function cancelCurrentProjectFetch() {
-    const currentCycle = autoFetchCyclePromise;
     const currentFetch = projectFetchPromise;
     projectFetchAbortController?.abort();
-
-    if (currentCycle) {
-        await currentCycle;
-        return;
-    }
 
     if (currentFetch) {
         try {
@@ -1262,40 +1220,6 @@ async function cancelCurrentProjectFetch() {
             }
         }
     }
-}
-
-function runAutoFetchCycle() {
-    if (!autoFetchActive || autoFetchCyclePromise) return autoFetchCyclePromise;
-
-    autoFetchCyclePromise = (async () => {
-        try {
-            const response = await fetch(`http://127.0.0.1:${PORT}/fetch_projects`, {
-                method: "POST",
-            });
-            let result;
-            try {
-                result = await response.json();
-            } catch {
-                throw new Error(`Local /fetch_projects endpoint returned invalid JSON (HTTP ${response.status}).`);
-            }
-            if (!response.ok || !result?.ok) {
-                throw new Error(result?.error || `Local /fetch_projects endpoint returned HTTP ${response.status}.`);
-            }
-            console.log(`Server-side auto-fetch: ${result.message}`);
-        } catch (error) {
-            console.error("Server-side auto-fetch failed:", error);
-        }
-    })().finally(() => {
-        autoFetchCyclePromise = null;
-        if (autoFetchActive) {
-            autoFetchTimer = setTimeout(() => {
-                autoFetchTimer = null;
-                void runAutoFetchCycle();
-            }, PROJECT_POLL_INTERVAL_MS);
-        }
-    });
-
-    return autoFetchCyclePromise;
 }
 
 async function processDetailProjects(projects) {

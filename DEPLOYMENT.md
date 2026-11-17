@@ -48,13 +48,12 @@ columns in `API_projects` (for example, `Identity_verified`, `Email_verified`,
 saves incoming projects.
 
 The Freelancer Project Forwarder extension keeps its popup as the user interface. The
-Fetch and send button makes one request to `/fetch_projects`. Start auto repeat makes
-one request to `/auto_fetch/start`; the server immediately sends a POST to
-`/fetch_projects`, then sends another request every 10 seconds after the previous
-request completes. Each fetch saves projects through the same processing path used by
-`/add_detail`. Stop makes one request to `/auto_fetch/stop`. Repeating requests run only
-on the server and stop when the server process restarts. The extension does not request
-Freelancer directly.
+Fetch and send button makes one request to `/fetch_projects`. Start auto-fetch makes the
+frontend send a POST to `/fetch_projects` immediately and then every 10 seconds. Stop
+clears the frontend timer and sends one request to `/auto_fetch/stop` to cancel any
+in-flight fetch. The server coalesces concurrent fetches while one is already in
+progress. Repeating requests run only while the popup or page remains open; the server
+does not schedule repeat requests. The extension does not request Freelancer directly.
 
 The Auto Bid extension compares the configured profile's comma-separated skills with
 project `jobs[].name` values, then asks the model configured in the server to select
