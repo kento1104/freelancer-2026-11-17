@@ -1159,17 +1159,17 @@ function handleStartAutoFetch(_req, res) {
     return res.json({
         ok: true,
         active: true,
-        message: "Server-side auto-fetch started. The server will check every 10 seconds.",
+        message: "Server-side auto-fetch started. The server will send a fetch request every 10 seconds.",
     });
 }
 
-function handleStopAutoFetch(_req, res) {
+async function handleStopAutoFetch(_req, res) {
     autoFetchActive = false;
     if (autoFetchTimer) {
         clearTimeout(autoFetchTimer);
         autoFetchTimer = null;
     }
-    projectFetchAbortController?.abort();
+    await cancelCurrentProjectFetch();
     return res.json({
         ok: true,
         active: false,
@@ -1243,12 +1243,44 @@ function sendFetchError(res, error) {
     });
 }
 
+async function cancelCurrentProjectFetch() {
+    const currentCycle = autoFetchCyclePromise;
+    const currentFetch = projectFetchPromise;
+    projectFetchAbortController?.abort();
+
+    if (currentCycle) {
+        await currentCycle;
+        return;
+    }
+
+    if (currentFetch) {
+        try {
+            await currentFetch;
+        } catch (error) {
+            if (error.name !== "AbortError") {
+                console.error("Project fetch ended with an error while being cancelled:", error);
+            }
+        }
+    }
+}
+
 function runAutoFetchCycle() {
     if (!autoFetchActive || autoFetchCyclePromise) return autoFetchCyclePromise;
 
     autoFetchCyclePromise = (async () => {
         try {
-            const result = await fetchAndProcessProjects();
+            const response = await fetch(`http://127.0.0.1:${PORT}/fetch_projects`, {
+                method: "POST",
+            });
+            let result;
+            try {
+                result = await response.json();
+            } catch {
+                throw new Error(`Local /fetch_projects endpoint returned invalid JSON (HTTP ${response.status}).`);
+            }
+            if (!response.ok || !result?.ok) {
+                throw new Error(result?.error || `Local /fetch_projects endpoint returned HTTP ${response.status}.`);
+            }
             console.log(`Server-side auto-fetch: ${result.message}`);
         } catch (error) {
             console.error("Server-side auto-fetch failed:", error);
