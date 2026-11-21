@@ -15,3 +15,30 @@ test("hourly projects in budget group 20 use the minimum budget", () => {
 
     assert.equal(project.ProposalBudget, 20);
 });
+
+test("fixed projects use the lowest bid in the selected budget range", () => {
+    const project = {
+        ProjectType: "Fixed",
+        MinBudgetGroup: 5,
+        MinBudget: 10,
+        MaxBudget: 50,
+        MaxBudget_USD: 50,
+    };
+
+    Force_BudgetSetter(project);
+
+    assert.equal(project.ProposalBudget, 22);
+});
+
+test("hourly projects use the lowest bid in the selected budget range", () => {
+    const project = {
+        ProjectType: "Hourly",
+        MinBudgetGroup: 10,
+        MinBudget: 10,
+        MaxBudget: 20,
+    };
+
+    Force_BudgetSetter(project);
+
+    assert.equal(project.ProposalBudget, 10);
+});

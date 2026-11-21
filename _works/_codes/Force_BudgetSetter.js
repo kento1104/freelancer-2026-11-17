@@ -21,9 +21,7 @@ function selectBudget(mincost, maxcost, startPosPer, endPosPer) {
     }
 
     if (candidates.length === 0) return null;
-
-    const randomIndex = Math.floor(Math.random() * candidates.length);
-    return candidates[randomIndex];
+    return candidates[0];
 }
 
 export default (projectInfo) => {
